@@ -1,3 +1,67 @@
-(ns calendar.core)
+(ns calendar.core
+  (:require [clojure.set :refer [intersection]]
+            [clojure.string :as string]))
+
+
+(defmacro import-static
+  "Imports the named static fields and/or static methods of the class
+  as (private) symbols in the current namespace.
+  Example:
+      user=> (import-static java.lang.Math PI sqrt)
+      nil
+      user=> PI
+      3.141592653589793
+      user=> (sqrt 16)
+      4.0
+  Note: The class name must be fully qualified, even if it has already
+  been imported.  Static methods are defined as MACROS, not
+  first-class fns."
+  [class & fields-and-methods]
+  (let [only (set (map str fields-and-methods))
+        the-class (. Class forName (str class))
+        static? (fn [x]
+                  (. java.lang.reflect.Modifier
+                     (isStatic (. x (getModifiers)))))
+        statics (fn [array]
+                  (set (map (memfn getName)
+                            (filter static? array))))
+        all-fields (statics (. the-class (getFields)))
+        all-methods (statics (. the-class (getMethods)))
+        fields-to-do (intersection all-fields only)
+        methods-to-do (intersection all-methods only)
+        make-sym (fn [string]
+                   (with-meta (symbol string) {:private true}))
+        import-field (fn [name]
+                       (list 'def (make-sym name)
+                             (list '. class (symbol name))))
+        import-method (fn [name]
+                        (list 'defmacro (make-sym name)
+                              '[& args]
+                              (list 'list ''. (list 'quote class)
+                                    (list 'apply 'list
+                                          (list 'quote (symbol name))
+                                          'args))))]
+    `(do ~@(map import-field fields-to-do)
+         ~@(map import-method methods-to-do))))
+
+(defn- static-symbol->name [sym]
+  (-> sym
+      name
+      (string/replace #"_" "-")
+      string/lower-case))
+
+
+
+(defn- symbol->defn-calendar [sym]
+  (let [generic-name (static-symbol->name sym)
+        defn-name (symbol (str generic-name "-from-calendar"))
+        input-name (gensym "calendar-or-date")]
+    `(defn ~defn-name [~input-name]
+       {~(keyword generic-name) (.get ~input-name ~(-> sym resolve deref))})))
+
+(eval
+ `(do ~@(map symbol->defn-calendar a)))
+
+
 
 
